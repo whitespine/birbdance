@@ -1,0 +1,40 @@
+<script id="vertex-shader" type="x-shader/x-vertex">
+  // Inputs per-vertex
+  attribute highp vec2 aVertexPosition;
+  attribute highp vec2 aTexturePosition;
+
+  // Inputs per draw-call
+  uniform highp vec2 uTimeScale;
+  uniform highp mat4 uProjectionMatrix;
+  uniform highp mat4 uModelMatrix;
+  
+  // Outputs
+  varying vec2 fTexPosition;
+
+  void main() {
+	vec4 homo_coord = vec4(aVertexPosition, 0.0, 1.0);
+	
+    fTexPosition = aTexturePosition;
+    gl_Position = uProjectionMatrix * uModelMatrix * homo_coord;
+  }
+</script>
+
+<script id="fragment-shader" type="x-shader/x-fragment">
+  precision highp float;
+  varying highp vec2 fTexPosition;
+  uniform sampler2D uTextureSamplerDiffuse;
+
+  void main() {
+    //vec4 outColor = vec4(fTexPosition.x, fTexPosition.y, 0.4, 1.0);
+    // gl_FragColor = uGlobalColor;
+    gl_FragColor = texture2D(uTextureSamplerDiffuse, fTexPosition);
+  }  
+</script>
+
+<canvas id="glcanvas" width="600" height="460">
+  Oh no! Your browser doesn't support canvas!
+</canvas>
+
+
+<script src="gl-matrix.js"></script>
+<script src="script.js"></script>
