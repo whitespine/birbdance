@@ -15,7 +15,7 @@
 	vec4 homo_coord = vec4(aVertexPosition, 0.0, 1.0);
 	
     fTexPosition = aTexturePosition;
-    gl_Position = uModelMatrix * homo_coord;
+    gl_Position = uProjectionMatrix * uModelMatrix * homo_coord;
   }
 </script>
 

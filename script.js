@@ -358,7 +358,7 @@ function animateScene() {
 
 function updateProjection() {
 	// Compute our aspect ratio
-	aspectRatio = glCanvas.width/glCanvas.height;
+	aspectRatio = glCanvas.width / glCanvas.height;
 	glMatrix.mat4.ortho(mProjectionMatrix, -aspectRatio, aspectRatio, -1.0, 1.0, -1, 1);
 	gl.uniformMatrix4fv(uProjectionMatrix, false, mProjectionMatrix);
 }
