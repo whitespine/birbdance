@@ -139,11 +139,13 @@ class AttributedVertexBuffer {
 	
 	// Calling this functions configures the attributes as specified in this model.
 	apply_attributes() {
+		let stride = this.total_stride;
 		let current_offset = 0;
 		this.attributes.forEach(function(a) {
 			// Get the size
 			let size = a.byte_length();
-			gl.vertexAttribPointer(a.attribute, a.item_count, a.type, a.normalize, size, current_offset);
+			console.log(a.attribute, a.item_count, a.type, a.normalize, stride, current_offset);
+			gl.vertexAttribPointer(a.attribute, a.item_count, a.type, a.normalize, stride, current_offset);
 			gl.enableVertexAttribArray(a.attribute);
 			
 			// Update our stride
@@ -162,10 +164,12 @@ class AttributedVertexBuffer {
 
 // Represents a sprite
 class AnimatedSprite {
-	constructor(x, y, scale, texture, numframes) {
+	constructor(vertex_buff, texture, num_frames, x, y, scale) {
+		this.modelMatrix = glMatrix.mat4.create();
+		this.vertex_buff = vertex_buff;
 		this.update_model(x, y, scale);
 		this.texture = texture;
-		this.modelMatrix = mat4.create();
+		this.num_frames = num_frames;
 	}
 	
 	update_model(x, y, scale) {
@@ -174,18 +178,21 @@ class AnimatedSprite {
 		this.scale = scale;
 		
 		// Update the matrix
-		mat4.identity(this.modelMatrix);
+		glMatrix.mat4.fromScaling(this.modelMatrix, glMatrix.vec3.fromValues(scale, scale, scale));
+		let translation_vec = glMatrix.vec3.fromValues(x, y, 0.0)
+		glMatrix.mat4.translate(this.modelMatrix, this.modelMatrix, translation_vec);
 	}	
 	
 	draw() {
 		// Set our texture(s) to be the one drawn
-		this.texture.bind(0);
+		this.texture.bind(diffuseUnit);
 		
 		// Tell where to draw
-		gl.uniformMatrix4fv(uModelMatrix, this.modelMatrix);
+		gl.uniformMatrix4fv(uModelMatrix, false, this.modelMatrix);
 		
 		// Draw
-		gl.drawArrays(gl.TRIANGLE_FAN, 0, vertexCount);
+		// this.vertex_buff.apply_attributes();
+		this.vertex_buff.draw();
 	}
 }
 
@@ -220,7 +227,7 @@ let previousTime = 0.0;
 let birdTex;
 
 // Our things to draw
-let sprites = [];
+let sprites;
 
 
 
@@ -256,7 +263,6 @@ function startup() {
 	// Find our uniforms
 	uModelMatrix = gl.getUniformLocation(shaderProgram, "uModelMatrix");
 	uProjectionMatrix = gl.getUniformLocation(shaderProgram, "uProjectionMatrix");
-	uTimeScale = gl.getUniformLocation(shaderProgram, "uTimeScale");
 	uTextureSamplerDiffuse = gl.getUniformLocation(shaderProgram, "uTextureSamplerDiffuse");
 
 	// Find and configure our vertex attributes
@@ -272,6 +278,9 @@ function startup() {
 	// Load our textures
 	birdTex = new Texture('misery.jpg');
 	
+	// Set our texture uniforms to correspond to the appropriate units
+	gl.uniform1i(uTextureSamplerDiffuse, diffuseUnit);
+	
 	// Neither of these will change. Bind both:
 	squareVertexBuffer.apply_attributes();
 	birdTex.bind(0);
@@ -279,55 +288,62 @@ function startup() {
 	// Set the clear color to dull grey
 	gl.clearColor(0.4, 0.4, 0.4, 1.0);
   
+	// Add our sprites
+	sprites = [
+		new AnimatedSprite(squareVertexBuffer, birdTex, 1, -0.5, 0, 1),
+		new AnimatedSprite(squareVertexBuffer, birdTex, 1, 0.5, 0, 1),
+	]
+  
 	// Run  
 	animateScene();
 }
 
 function buildShaderProgram(shaderInfo) {
-  let program = gl.createProgram();
+	let program = gl.createProgram();
 
-  shaderInfo.forEach(function(desc) {
-    let shader = compileShader(desc.id, desc.type);
+	shaderInfo.forEach(function(desc) {
+	let shader = compileShader(desc.id, desc.type);
+		if (shader) {
+		gl.attachShader(program, shader);
+		}
+	});
 
-    if (shader) {
-      gl.attachShader(program, shader);
-    }
-  });
+	gl.linkProgram(program)
 
-  gl.linkProgram(program)
+	if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+		console.log("Error linking shader program:");
+		console.log(gl.getProgramInfoLog(program));
+	}
 
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    console.log("Error linking shader program:");
-    console.log(gl.getProgramInfoLog(program));
-  }
-
-  return program;
+	return program;
 }
 
 function compileShader(id, type) {
-  let code = document.getElementById(id).firstChild.nodeValue;
-  let shader = gl.createShader(type);
+	let code = document.getElementById(id).firstChild.nodeValue;
+	let shader = gl.createShader(type);
 
-  gl.shaderSource(shader, code);
-  gl.compileShader(shader);
+	gl.shaderSource(shader, code);
+	gl.compileShader(shader);
 
-  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-    console.log(`Error compiling ${type === gl.VERTEX_SHADER ? "vertex" : "fragment"} shader:`);
-    console.log(gl.getShaderInfoLog(shader));
-  }
-  return shader;
+	if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+		console.log(`Error compiling ${type === gl.VERTEX_SHADER ? "vertex" : "fragment"} shader:`);
+		console.log(gl.getShaderInfoLog(shader));
+	}
+	return shader;
 }
 
 function animateScene() {
 	// Setup default viewport. We run this every time because we need handle resizing
 	gl.viewport(0, 0, glCanvas.width, glCanvas.height);
-
+	updateProjection();
 
 	// Clear color buffer
 	gl.clear(gl.COLOR_BUFFER_BIT);
 
-	// Set the current array buffer to the parrot vertices
-	
+	// DRAW!
+	sprites.forEach(function (sp) {
+		sp.draw();
+	});
 
 	window.requestAnimationFrame(function(currentTime) {
 		let deltaTime = (currentTime - previousTime) / 1000.0; // Compute change in time in seconds
@@ -343,6 +359,6 @@ function animateScene() {
 function updateProjection() {
 	// Compute our aspect ratio
 	aspectRatio = glCanvas.width/glCanvas.height;
-	ortho(mProjectionMatrix, -aspectRatio, aspectRatio, -1.0, 1.0, -1, 1);
-	gl.uniformMatrix4fv(uProjectionMatrix, mProjectionMatrix);
+	glMatrix.mat4.ortho(mProjectionMatrix, -aspectRatio, aspectRatio, -1.0, 1.0, -1, 1);
+	gl.uniformMatrix4fv(uProjectionMatrix, false, mProjectionMatrix);
 }
