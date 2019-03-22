@@ -64,11 +64,11 @@ class Texture {
 			} else {
 				// No, it's not a power of 2. Turn off mips and set
 				// wrapping to clamp to edge
-				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+				gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
 			}
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
 			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+			gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
 		};
 		
 		// Fetch it - the onload handles the rest
@@ -144,7 +144,6 @@ class AttributedVertexBuffer {
 		this.attributes.forEach(function(a) {
 			// Get the size
 			let size = a.byte_length();
-			console.log(a.attribute, a.item_count, a.type, a.normalize, stride, current_offset);
 			gl.vertexAttribPointer(a.attribute, a.item_count, a.type, a.normalize, stride, current_offset);
 			gl.enableVertexAttribArray(a.attribute);
 			
@@ -164,23 +163,50 @@ class AttributedVertexBuffer {
 
 // Represents a sprite
 class AnimatedSprite {
-	constructor(vertex_buff, texture, num_frames, x, y, scale) {
-		this.modelMatrix = glMatrix.mat4.create();
-		this.vertex_buff = vertex_buff;
+	constructor(vertex_buff, texture, num_frames, x, y, scale, time_per_frame) {
+		// Allocate our thingies
+		this.model_matrix = glMatrix.mat4.create();
+		this.translation_vec = glMatrix.vec3.create();
+		this.scale_vec = glMatrix.vec3.create();
+		this.translation_vec.z = 0.0;
+		this.scale_vec.z = 0.0;
+		
+		// Initialize our matrix/vertices with provided data
 		this.update_model(x, y, scale);
+		
+		// Rendering stuff
+		this.vertex_buff = vertex_buff;
 		this.texture = texture;
+		
+		// Static frame info
 		this.num_frames = num_frames;
+		this.frame_width = 1.0 / num_frames;
+		this.time_per_frame = time_per_frame;
+		
+		// Dynamic frame info
+		this.curr_frame = 0;
+		this.curr_frame_time = 0.0; // Time we've been
+		this.frame_vec = glMatrix.vec2.create();
+		if(!time_per_frame) {
+			console.log("Warning: shit's fucked");
+			let fucked = 1 / 0;
+		}
 	}
 	
 	update_model(x, y, scale) {
-		this.x = x;
-		this.y = y;
-		this.scale = scale;
+		// Update our vectors
+		this.translation_vec[0] = x;
+		this.translation_vec[1] = y;
+		this.scale_vec[0] = scale;
+		this.scale_vec[1] = scale;
 		
 		// Update the matrix
-		glMatrix.mat4.fromScaling(this.modelMatrix, glMatrix.vec3.fromValues(scale, scale, scale));
-		let translation_vec = glMatrix.vec3.fromValues(x, y, 0.0)
-		glMatrix.mat4.translate(this.modelMatrix, this.modelMatrix, translation_vec);
+		let translation_vec = glMatrix.vec3.fromValues(x, y, 0.0);
+		let scale_vec = glMatrix.vec3.fromValues(scale, scale, 1.0);
+		
+		// Send it down the pipe
+		glMatrix.mat4.fromTranslation(this.model_matrix, translation_vec);
+		glMatrix.mat4.scale(this.model_matrix, this.model_matrix, scale_vec);
 	}	
 	
 	draw() {
@@ -188,11 +214,31 @@ class AnimatedSprite {
 		this.texture.bind(diffuseUnit);
 		
 		// Tell where to draw
-		gl.uniformMatrix4fv(uModelMatrix, false, this.modelMatrix);
+		gl.uniformMatrix4fv(uModelMatrix, false, this.model_matrix);
+		
+		// Set the frame offset
+		let offset = this.frame_width * this.curr_frame;
+		gl.uniform2f(uFrameInfo, offset, this.frame_width);
 		
 		// Draw
 		// this.vertex_buff.apply_attributes();
 		this.vertex_buff.draw();
+	}
+	
+	// Tells this gif thing that the provided number of seconds have passed
+	shift_time(time_in_seconds) {
+		this.curr_frame_time += time_in_seconds;
+
+		// Consume seconds to scroll frames
+		while(this.curr_frame_time > this.time_per_frame) {
+			this.curr_frame_time -= this.time_per_frame;
+			this.curr_frame += 1;
+		}
+		
+		// Wrap frames
+		while(this.curr_frame >= this.num_frames) {
+			this.curr_frame -= this.num_frames;
+		}
 	}
 }
 
@@ -207,7 +253,7 @@ let squareVertexBuffer;
 // Uniforms
 let uModelMatrix;
 let uProjectionMatrix;
-let uTimeScale;
+let uFrameInfo;
 let uTextureSamplerDiffuse;
 
 // Global Matrices 
@@ -221,7 +267,7 @@ let aVertexPosition;
 let aTexturePosition;
 
 // Animation timing
-let previousTime = 0.0;
+let previous_time = 0.0;
 
 // Textures
 let birdTex;
@@ -229,11 +275,15 @@ let birdTex;
 // Our things to draw
 let sprites;
 
+// Interactivity
+let aspectRatio;
+let mousePosition = glMatrix.vec3.create();
 
 
 // Enable load
 window.addEventListener("load", startup, false);
 
+// Load this on startup. Setup birds, etc.
 function startup() {
 	// Find the canvas
 	glCanvas = document.getElementById("glcanvas");
@@ -263,6 +313,7 @@ function startup() {
 	// Find our uniforms
 	uModelMatrix = gl.getUniformLocation(shaderProgram, "uModelMatrix");
 	uProjectionMatrix = gl.getUniformLocation(shaderProgram, "uProjectionMatrix");
+	uFrameInfo = gl.getUniformLocation(shaderProgram, "uFrameInfo");
 	uTextureSamplerDiffuse = gl.getUniformLocation(shaderProgram, "uTextureSamplerDiffuse");
 
 	// Find and configure our vertex attributes
@@ -276,7 +327,7 @@ function startup() {
 	squareVertexBuffer = new AttributedVertexBuffer(CENTERED_TEXTURED_SQUARE_BUFFER, [pos_attr, tex_attr])
 
 	// Load our textures
-	birdTex = new Texture('misery.jpg');
+	birdTex = new Texture('birbsprites.png');
 	
 	// Set our texture uniforms to correspond to the appropriate units
 	gl.uniform1i(uTextureSamplerDiffuse, diffuseUnit);
@@ -289,15 +340,24 @@ function startup() {
 	gl.clearColor(0.4, 0.4, 0.4, 1.0);
   
 	// Add our sprites
-	sprites = [
-		new AnimatedSprite(squareVertexBuffer, birdTex, 1, -0.5, 0, 1),
-		new AnimatedSprite(squareVertexBuffer, birdTex, 1, 0.5, 0, 1),
-	]
+	count = 32;
+	width = 2.0 / count;
+	sprites = [];
+	for(row=0; row < count; row++) {
+		for(col=0; col < count; col++) {
+			let x = -1.0 + (width * 0.5) + (col * width);
+			let y = -1.0 + (width * 0.5) + (row * width);
+			
+			let new_birb = new AnimatedSprite(squareVertexBuffer, birdTex, 20, x, y, width, 1.0/30);
+			sprites.push(new_birb);
+		}
+	}
   
 	// Run  
 	animateScene();
 }
 
+// Helper to gather shader data 
 function buildShaderProgram(shaderInfo) {
 	let program = gl.createProgram();
 
@@ -318,6 +378,7 @@ function buildShaderProgram(shaderInfo) {
 	return program;
 }
 
+// Helper to compile shader 
 function compileShader(id, type) {
 	let code = document.getElementById(id).firstChild.nodeValue;
 	let shader = gl.createShader(type);
@@ -332,6 +393,7 @@ function compileShader(id, type) {
 	return shader;
 }
 
+// Main loop
 function animateScene() {
 	// Setup default viewport. We run this every time because we need handle resizing
 	gl.viewport(0, 0, glCanvas.width, glCanvas.height);
@@ -345,20 +407,60 @@ function animateScene() {
 		sp.draw();
 	});
 
-	window.requestAnimationFrame(function(currentTime) {
-		let deltaTime = (currentTime - previousTime) / 1000.0; // Compute change in time in seconds
+	window.requestAnimationFrame(function(current_time) {
+		let delta_time = (current_time - previous_time) / 1000.0; // Compute change in time in seconds
 
+		// Update each
+		sprites.forEach(function (sp) {
+			// How far from mouse?
+			let dist = glMatrix.vec2.distance(mousePosition, sp.translation_vec);
+			dist = (0.7 - dist) * 3;
+			
+			if(dist > 0) {
+				dist = Math.pow(dist, 0.5);							 
+				sp.shift_time(delta_time * dist);	
+			}
+		});
+		
 		// Save previous time
-		previousTime = currentTime;
+		previous_time = current_time;
 
 		// Do recursive work
 		animateScene();
 	});
 }
 
+// Helper that updates our projection matrix
 function updateProjection() {
 	// Compute our aspect ratio
 	aspectRatio = glCanvas.width / glCanvas.height;
 	glMatrix.mat4.ortho(mProjectionMatrix, -aspectRatio, aspectRatio, -1.0, 1.0, -1, 1);
 	gl.uniformMatrix4fv(uProjectionMatrix, false, mProjectionMatrix);
 }
+
+// Helper that gives our mouse position in 
+function updateMousePosition(evt) {
+	if(glCanvas){
+		let rect = glCanvas.getBoundingClientRect();
+		let x = evt.clientX - rect.left;
+		let y = evt.clientY - rect.top;
+
+		// Get them proportional, in GL coords
+		x = ((x / rect.width) - 0.5) * 2.0 * aspectRatio;
+		y = ((y / rect.height) - 0.5) * -2.0;
+
+		// Update the vec
+		mousePosition[0] = x;
+		mousePosition[1] = y;	
+	}
+}
+
+
+
+
+
+
+
+
+
+

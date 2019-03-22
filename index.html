@@ -4,9 +4,9 @@
   attribute highp vec2 aTexturePosition;
 
   // Inputs per draw-call
-  uniform highp vec2 uTimeScale;
   uniform highp mat4 uProjectionMatrix;
   uniform highp mat4 uModelMatrix;
+  uniform highp vec2 uFrameInfo; // Fmt = offset, width
   
   // Outputs
   varying vec2 fTexPosition;
@@ -14,7 +14,7 @@
   void main() {
 	vec4 homo_coord = vec4(aVertexPosition, 0.0, 1.0);
 	
-    fTexPosition = aTexturePosition;
+    fTexPosition = vec2(uFrameInfo.x + aTexturePosition.x * uFrameInfo.y, aTexturePosition.y);
     gl_Position = uProjectionMatrix * uModelMatrix * homo_coord;
   }
 </script>
@@ -29,7 +29,7 @@
   }  
 </script>
 
-<canvas id="glcanvas" width="700" height="460">
+<canvas onmousemove="updateMousePosition(event)" id="glcanvas" width="1600" height="1000">
   Oh no! Your browser doesn't support canvas!
 </canvas>
 
